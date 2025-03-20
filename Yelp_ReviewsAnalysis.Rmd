@@ -1,0 +1,1178 @@
+---
+title: "Yelp Reviews Analysis"
+author: "Shailaja Thummar"
+date: "Fall 2024"
+output:
+  pdf_document: default
+  html_document: default
+---
+# Clear the environment
+```{r}
+rm(list = ls())
+```
+#Libraries
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(tidytext)
+library(SnowballC)
+library(textstem)
+```
+# Q1.a 
+#number of reviews
+```{r}
+resReviewsData <- read_csv2('/Users/shailajathummar/Desktop/Resume Projects/R Data Analysis /yelp Reviews/restaurantReviewsSample.csv')
+resReviewsData <-  resReviewsData %>% rename(stars=starsReview)
+resReviewsData %>% group_by(stars) %>% count()
+```
+#Count unique restaurants based on business_id
+```{r}
+unique_restaurants <- resReviewsData %>% summarise(num_restaurants = n_distinct(business_id))
+```
+# Display the result
+```{r}
+print(unique_restaurants)
+```
+#Distribution of reviews count across restaraunts
+# Group by business_id and count the number of reviews per restaurant
+```{r}
+review_distribution <- resReviewsData %>%group_by(business_id) %>% summarise(review_count = n())
+```
+# Display summary statistics of the review distribution
+```{r}
+summary(review_distribution$review_count)
+```
+# Visualize the distribution of review counts across restaurants
+```{r}
+ggplot(review_distribution, aes(x = review_count)) + geom_histogram(binwidth = 5, fill = "skyblue", color = "black") +labs(title = "Distribution of Review Counts Across Restaurants",x = "Number of Reviews per Restaurant",y = "Frequency") +theme_minimal()
+```
+#Q1.b Relationship of stars and location
+```{r}
+ggplot(resReviewsData, aes(x= funny, y=stars)) +geom_point()
+resReviewsData %>%   group_by(state) %>% tally() %>% view()
+rrData <- resReviewsData %>% filter(str_detect(postal_code, "^[0-9]{1,5}"))
+```
+# Calculate the average review star rating for each business
+```{r}
+avgReviewStars <- resReviewsData %>%group_by(business_id) %>% summarise(avgReviewStars = mean(stars, na.rm = TRUE))
+```
+# Merge with the starsBusiness column
+```{r}
+businessData <- resReviewsData %>%select(business_id, starsBusiness) %>%distinct()
+```
+# Join both datasets
+```{r}
+combinedData <- left_join(avgReviewStars, businessData, by = "business_id")
+```
+# Visualize the relationship using a scatter plot
+```{r}
+ggplot(combinedData) +
+  geom_point(aes(x = avgReviewStars, y = starsBusiness), color = 'blue', alpha = 0.6) +
+  geom_point(aes(x = starsBusiness, y = starsBusiness), color = 'red', alpha = 0.6) +
+  labs(title = "Review Star Ratings vs Business Star Ratings",
+       x = "Review Star Rating",
+       y = "Business Star Rating") +
+  theme_minimal()
+```
+# Calculate correlation
+```{r}
+cor(combinedData$avgReviewStars, combinedData$starsBusiness, use = "complete.obs") 
+```
+#Q1. c.
+# Inspect the data structure
+```{r}
+head(resReviewsData)
+summary(resReviewsData$stars)
+```
+# Plot the distribution of star ratings
+```{r}
+ggplot(resReviewsData, aes(x = factor(stars))) +
+  geom_bar(fill = "orange", color = "brown") +
+  labs(title = "Distribution of Star Ratings in Reviews",
+       x = "Star Rating",
+       y = "Count") +
+  theme_minimal()
+```
+# Define labels
+#Positive if the rating is 4 or 5.
+#Negative if the rating is 1 or 2.
+#3-star ratings was marked as "Neutral" 
+```{r}
+resReviewsData$sentiment <- ifelse(resReviewsData$stars >= 4, "Positive",ifelse(resReviewsData$stars <= 2, "Negative", "Neutral"))
+```
+# Check the distribution of labels
+```{r}
+table(resReviewsData$sentiment)
+```
+# Plot the distribution of sentiment labels
+```{r}
+ggplot(resReviewsData, aes(x = sentiment)) +
+  geom_bar(fill = "lightpink", color = "brown") +
+  labs(title = "Distribution of Review Sentiments",
+       x = "Sentiment",
+       y = "Count") +
+  theme_minimal()
+```
+#Q2. 
+#Clean the dataset
+```{r}
+library(tidytext)
+```
+#choose one of these;retain all other attributes
+```{r}
+rrTokens <- rrData %>% unnest_tokens(word, text)
+rrTokens <- rrData %>% select(review_id, stars, text ) %>% unnest_tokens(word, text)
+```
+#keep running
+#Count total number of tokens
+```{r}
+rrTokens %>% distinct(word) %>% dim()
+```
+#Removes common words (like "and," "the," "of") that are not useful for sentiment analysis
+```{r}
+rrTokens <- rrTokens %>% anti_join(stop_words)
+rrTokens %>% distinct(word) %>% dim()
+rrTokens %>% count(word, sort=TRUE) %>% top_n(10)
+rareWords <-rrTokens %>% count(word, sort=TRUE) %>% filter(n<10)
+xx<-anti_join(rrTokens, rareWords)
+```
+#Joining with by = join_by(word)
+```{r}
+xx %>% count(word, sort=TRUE) %>% view()
+```
+#Filters out any words that contain numbers
+```{r}
+xx2<- xx %>% filter(str_detect(word,"[0-9]")==FALSE)
+rrTokens<- xx2
+```
+#Analyze words by star ratings 
+```{r}
+rrTokens %>% group_by(stars) %>% count(word, sort=TRUE)
+rrTokens %>% group_by(stars) %>% count(word, sort=TRUE) %>% arrange(desc(stars)) %>% view()
+```
+#top 20 positive
+```{r}
+ws <- rrTokens %>% group_by(stars) %>% count(word, sort=TRUE)
+ws<-  ws %>% group_by(stars) %>% mutate(prop=n/sum(n))
+ws %>% filter(word=='love')
+```
+#To calculate avg_star for word "love"
+# Step 1: First, count the frequency of each word per review (grouped by word and star rating)
+```{r}
+word_freq_per_star <- rrTokens %>%
+  count(word, stars) %>%
+  filter(!is.na(stars), !is.na(word))  # Remove missing values for stars and word
+```
+# Step 2: Calculate the weighted average star rating for each word
+# Calculate weighted mean of stars using the count 'n' as weights
+```{r}
+ws_avg <- word_freq_per_star %>%
+  group_by(word) %>%
+  summarise(avg_star = weighted.mean(stars, w = n))
+```
+# View the result for a specific word, e.g., 'love'
+```{r}
+ws_avg %>% filter(word == 'love')
+ws %>% group_by(stars) %>% arrange(stars, desc(prop)) %>% view()
+ws %>% group_by(stars) %>% arrange(stars, desc(prop)) %>% filter(row_number()<=20) %>% view()
+```
+#make plot
+```{r}
+ws %>% group_by(stars) %>% arrange(stars, desc(prop)) %>% filter(row_number()<=20) %>% ggplot(aes(word, prop))+geom_col()+coord_flip()+facet_wrap((~stars))
+ws %>% filter(stars==1)  %>%  ggplot(aes(word, n)) + geom_col()+coord_flip()
+```
+# Top 20 Words for Each Star Rating
+```{r}
+ws %>%
+  group_by(stars) %>%
+  arrange(desc(prop)) %>%
+  filter(row_number() <= 20) %>%
+  ggplot(aes(x = reorder_within(word, prop, stars), y = prop, fill = as.factor(stars))) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  scale_x_reordered() +
+  facet_wrap(~stars, scales = "free_y") +
+  labs(
+    title = "Top 20 Words by Star Rating",
+    x = "Words",
+    y = "Proportion",
+    caption = "Data source: Restaurant Reviews"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    strip.text = element_text(face = "bold", size = 14),
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10)
+  )
+```
+#which words are related to higher/lower star
+```{r}
+xx<- ws %>% group_by(word) %>% summarise(totWS=sum(stars*prop))
+```
+#top 20 of highest and lowest star
+```{r}
+xx %>% top_n(20)
+xx %>% top_n(-20)
+```
+#Now we will visualize these findings:
+# Plot for Top 20 Highest Scoring Words
+```{r}
+xx %>%
+  arrange(desc(totWS)) %>%
+  slice_head(n = 20) %>%  # Top 20 highest scores
+  ggplot(aes(x = reorder(word, totWS), y = totWS)) +
+  geom_col(fill = "green", show.legend = FALSE) +  # Green for positive
+  coord_flip() +
+  labs(
+    title = "Top 20 Positive Words (Highest Weighted Scores)",
+    x = "Words",
+    y = "Weighted Score (totWS)",
+    caption = "Data source: Restaurant Reviews"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10)
+  )
+```
+# Plot for Top 20 Lowest Scoring Words
+```{r}
+xx %>%
+  arrange(totWS) %>%
+  slice_head(n = 20) %>%  # Top 20 lowest scores
+  ggplot(aes(x = reorder(word, totWS), y = totWS)) +
+  geom_col(fill = "red", show.legend = FALSE) +  # Red for negative
+  coord_flip() +
+  labs(
+    title = "Top 20 Negative Words (Lowest Weighted Scores)",
+    x = "Words",
+    y = "Weighted Score (totWS)",
+    caption = "Data source: Restaurant Reviews"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10)
+  )
+```
+#Question 3 - Part A
+#additional process of dataset
+```{r}
+rrTokens_stem<-rrTokens %>%  mutate(word_stem = SnowballC::wordStem(word))
+rrTokens_lemm<-rrTokens %>%  mutate(word_lemma = textstem::lemmatize_words(word))
+```
+#tokenize, remove stopwords, and lemmatize
+```{r}
+rrTokens<-rrTokens %>%  mutate(word = textstem::lemmatize_words(word))
+rrTokens<-rrTokens %>% filter(str_length(word)<=3 | str_length(word)<=15)
+rrTokens<- rrTokens %>% group_by(review_id, stars) %>% count(word)
+```
+#count total number of words by review, and add this in a column
+```{r}
+totWords<-rrTokens  %>% group_by(review_id) %>%  count(word, sort=TRUE) %>% summarise(total=sum(n))
+xx<-left_join(rrTokens, totWords)
+xx<-xx %>% mutate(tf=n/total)
+head(xx)
+```
+#set up dictionary
+```{r}
+library(textdata)
+get_sentiments("bing") %>% view() %>% count()
+get_sentiments("nrc") %>% view() %>% count() #input Yes
+get_sentiments("afinn") %>% view() %>% count() #inout Yes
+rrSenti_bing<- rrTokens %>% left_join(get_sentiments("bing"), by="word")
+rrSenti_bing<- rrTokens %>% inner_join(get_sentiments("bing"), by="word")
+xx<-rrSenti_bing %>% group_by(word, sentiment) %>% summarise(totOcc=sum(n)) %>% arrange(sentiment, desc(totOcc))
+rrSenti_nrc<- rrTokens %>% left_join(get_sentiments("nrc"), by="word")
+rrSenti_nrc<- rrTokens %>% inner_join(get_sentiments("nrc"), by="word")
+xx_nrc<-rrSenti_nrc %>% group_by(word, sentiment) %>% summarise(totOcc=sum(n)) %>% arrange(sentiment, desc(totOcc))
+rrSenti_afinn<- rrTokens %>% inner_join(get_sentiments("afinn"), by="word")
+rrSenti_afinn<- rrTokens %>% inner_join(get_sentiments("afinn"), by="word")
+xx_afinn<-rrSenti_afinn %>% group_by(word, value) %>% summarise(totOcc=sum(n)) %>% arrange(value, desc(totOcc))
+```
+#Q3-Part B
+#Overlap in Matching Terms
+# Load sentiment dictionaries
+```{r}
+bing <- get_sentiments("bing")
+nrc <- get_sentiments("nrc")
+afinn <- get_sentiments("afinn")
+```
+# Extract the unique words 
+```{r}
+bing_terms <- unique(bing$word)
+nrc_terms <- unique(nrc$word)
+afinn_terms <- unique(afinn$word)
+```
+# Find the overlap of terms 
+```{r}
+overlap_bing_nrc <- intersect(bing_terms, nrc_terms)
+overlap_bing_afinn <- intersect(bing_terms, afinn_terms)
+overlap_nrc_afinn <- intersect(nrc_terms, afinn_terms)
+```
+# Find the total number of unique terms in each dictionary
+```{r}
+length(bing_terms)
+length(nrc_terms)
+length(afinn_terms)
+```
+# Find the number of overlapping terms
+```{r}
+length(overlap_bing_nrc)
+length(overlap_bing_afinn)
+length(overlap_nrc_afinn)
+```
+# Calculate the percentage overlap between dictionaries
+```{r}
+overlap_percentage_bing_nrc <- length(overlap_bing_nrc) / length(bing_terms) * 100
+overlap_percentage_bing_afinn <- length(overlap_bing_afinn) / length(bing_terms) * 100
+overlap_percentage_nrc_afinn <- length(overlap_nrc_afinn) / length(nrc_terms) * 100
+```
+#Bing Plot
+```{r}
+rbind(top_n(xx, 25), top_n(xx, -25)) %>% ggplot(aes(word, totOcc, fill=sentiment)) +geom_col()+coord_flip()
+rbind(top_n(xx, 25), top_n(xx, -25)) %>% mutate(word=reorder(word,totOcc)) %>% ggplot(aes(word, totOcc, fill=sentiment)) +geom_col()+coord_flip()
+```
+#NRC Plot
+```{r}
+rbind(top_n(xx_nrc, 25), top_n(xx_nrc, -25)) %>% ggplot(aes(word, totOcc, fill=sentiment)) +geom_col()+coord_flip()
+rbind(top_n(xx_nrc, 25), top_n(xx_nrc, -25)) %>% mutate(word=reorder(word,totOcc)) %>% ggplot(aes(word, totOcc, fill=sentiment)) +geom_col()+coord_flip()
+```
+#Afinn Plot
+```{r}
+rbind(top_n(xx_afinn, 25), top_n(xx_afinn, -25)) %>% ggplot(aes(word, totOcc, fill=value)) +geom_col()+coord_flip()
+rbind(top_n(xx_afinn, 25), top_n(xx_afinn, -25)) %>% mutate(word=reorder(word,totOcc)) %>% ggplot(aes(word, totOcc, fill=value)) +geom_col()+coord_flip()
+```
+#Q3 - Part C
+#with "bing" dictionary'
+```{r}
+rrSenti_bing<-rrTokens %>% inner_join(get_sentiments("bing"), by="word") %>% group_by (word, sentiment) %>% summarise(totOcc=sum(n)) %>% arrange(sentiment, desc(totOcc))
+rrSenti_bing %>% group_by(sentiment) %>% summarise(count=n(), sumn=sum(totOcc))
+```
+#Bing make forms
+```{r}
+xxbing<-rrSenti_bing %>% mutate(goodBad=ifelse(sentiment %in% c('negative'), -totOcc, ifelse(sentiment %in% c('positive'), totOcc, 0)))
+xxbing<-ungroup(xxbing)
+top_n(xxbing, 10)
+top_n(xxbing, -10)
+```
+#Bing make plot
+```{r}
+rbind(top_n(xxbing, 25), top_n(xxbing, -25)) %>% mutate(word=reorder(word,goodBad)) %>% ggplot(aes(word, goodBad, fill=goodBad)) +geom_col()+coord_flip()
+```
+#with "nrc" dictionary'
+```{r}
+rrSenti_nrc<-rrTokens %>% inner_join(get_sentiments("nrc"), by="word") %>% group_by (word, sentiment) %>% summarise(totOcc=sum(n)) %>% arrange(sentiment, desc(totOcc))
+rrSenti_nrc %>% group_by(sentiment) %>% summarise(count=n(), sumn=sum(totOcc))
+```
+#NRC make forms
+```{r}
+rrSenti_nrc %>% filter(sentiment=='anticipation') %>% view()
+rrSenti_nrc %>% filter(sentiment=='fear') %>% view()
+xx<-rrSenti_nrc %>% mutate(goodBad=ifelse(sentiment %in% c('anger', 'disgust', 'fear', 'sadness', 'negative'), -totOcc, ifelse(sentiment %in% c('positive', 'joy', 'anticipation', 'trust'), totOcc, 0)))
+xx<-ungroup(xx)
+top_n(xx, 10)
+top_n(xx, -10)
+```
+#NRC make plot
+```{r}
+rbind(top_n(xx, 25), top_n(xx, -25)) %>% mutate(word=reorder(word,goodBad)) %>% ggplot(aes(word, goodBad, fill=goodBad)) +geom_col()+coord_flip()
+```
+#with "Afinn" dictionary'
+```{r}
+rrSenti_afinn<-rrTokens %>% inner_join(get_sentiments("afinn"), by="word") %>% group_by (word, value) %>% summarise(totOcc=sum(n)) %>% arrange(value, desc(totOcc))
+rrSenti_afinn %>% group_by(value) %>% summarise(count=n(), sumn=sum(totOcc))
+```
+#Bing make forms
+```{r}
+xxaf<-rrSenti_afinn %>% mutate(goodBad=ifelse(value %in% c('-5','-4','-3','-2','-1'), -totOcc, ifelse(value %in% c('1','2','3','4','5'), totOcc, 0)))
+xxaf<-ungroup(xxaf)
+top_n(xxaf, 10)
+top_n(xxaf, -10)
+```
+#Bing make plot
+```{r}
+rbind(top_n(xxaf, 25), top_n(xxaf, -25)) %>% mutate(word=reorder(word,goodBad)) %>% ggplot(aes(word, goodBad, fill=goodBad)) +geom_col()+coord_flip()
+```
+#Q4. a
+#BING Summarise positive/negative sentiment words
+```{r}
+rrSent_bing <- rrTokens %>% inner_join(get_sentiments("bing"),by="word")
+revsent_bing <- rrSent_bing %>% group_by(review_id, stars) %>% summarise(nwords=n(),posSum=sum(sentiment=='positive'), negSum=sum(sentiment=='negative'))
+revsent_bing<- revsent_bing %>% mutate(posProp=posSum/nwords, negProp=negSum/nwords)
+revsent_bing<- revsent_bing %>% mutate(sentiScore=posProp-negProp)
+```
+#NRC Summarise positive/negative sentiment words
+```{r}
+rrSent_nrc <- rrTokens %>% inner_join(get_sentiments("nrc"),by="word")
+revsent_nrc <- rrSent_nrc %>% group_by(review_id, stars) %>% summarise(nwords=n(),posSum=sum(sentiment %in% c('positive', 'joy', 'anticipation', 'trust')), negSum=sum(sentiment %in% c('anger', 'disgust', 'fear', 'sadness', 'negative')))
+revsent_nrc<- revsent_nrc %>% mutate(posProp=posSum/nwords, negProp=negSum/nwords)
+revsent_nrc <- revsent_nrc %>% mutate(sentiScore=posProp-negProp)
+```
+#Afinn Summarise positive/negative sentiment words
+```{r}
+rrSent_afinn <- rrTokens %>% inner_join(get_sentiments("afinn"),by="word")
+revsent_afinn <- rrSent_afinn %>% group_by(review_id, stars) %>% summarise(nwords=n(),sentiSum=sum(value))
+```
+#Tables for review stars ratings
+```{r}
+revsent_bing %>% group_by(stars) %>% summarise(avgPos=mean(posProp), avgNeg=mean(negProp), avgSentiSc=mean(sentiScore))
+revsent_nrc %>% group_by(stars) %>% summarise(avgPos=mean(posProp), avgNeg=mean(negProp), avgSentiSc=mean(sentiScore))
+revsent_afinn %>% group_by(stars) %>% summarise(avgLen=mean(nwords),avgSent=mean(sentiSum))
+```
+#Question 5
+# Load required libraries
+```{r}
+library(tidyverse)
+library(tidytext)
+library(caret)
+library(glmnet)
+library(xgboost)
+library(randomForest)
+library(tm)
+library(e1071)
+```
+#Q5 Part A
+#Filter dataset for models
+```{r}
+ModelData <- resReviewsData %>% select(c('review_id','stars','text','name','starsBusiness','review_count','attributes','categories'))
+```
+#Convert star ratings to binary labels: 1 (positive) for 4-5 stars, 0 (negative) for 1-2 stars
+```{r}
+ModelData <- ModelData %>% mutate(sentiment = ifelse(stars >= 4, 1, ifelse(stars <= 2, 0, NA))) %>%filter(!is.na(sentiment))
+```
+#Q5 Part B
+#Tokenize text data, remove stop words, and lemmatize
+```{r}
+data_tokens <- ModelData %>% unnest_tokens(word, text) %>% anti_join(stop_words) %>% mutate(word=textstem::lemmatize_words(word))
+```
+#Calculate term frequency 
+```{r}
+wordcount <- data_tokens %>% group_by(review_id) %>% count(word)
+data_tokens2 <- left_join(data_tokens,wordcount)
+totWor <- wordcount %>% group_by(review_id) %>% count(word,sort=TRUE) %>% summarise(total=sum(n))
+data_tokens2 <- left_join(data_tokens2,totWor)
+data_tokens2 <- data_tokens2 %>% mutate(tf=n/total)
+```
+#Use bind to calculate tf,idf, ands tfidf values
+```{r}
+data_tokens2 <- data_tokens2 %>% bind_tf_idf(word,review_id,n)
+head(data_tokens2)
+```
+#Q5 Part C
+#Part i -- Document Term Matrix Size
+#take a random sample of 20,000 reviews for efficiency
+```{r}
+set.seed(123)
+sample_reviews <- data_tokens2 %>% sample_n(20000)
+```
+#DICTIONARY MODELS
+#Process Bing, NRC, Afinn Sentiment 
+```{r}
+bing_tokens <- sample_reviews %>% inner_join(bing, by = "word")
+nrc_tokens <- sample_reviews %>% inner_join(nrc, by = "word")
+afinn_tokens <- sample_reviews %>% inner_join(afinn, by = "word")
+```
+# Count Pos/Negative words or Score Sum and combine with main dataset
+```{r}
+bing_sentiments <- bing_tokens %>% group_by(review_id) %>% mutate(bing_positive = sum(sentiment.y == "positive", na.rm = TRUE), bing_negative = sum(sentiment.y == "negative", na.rm = TRUE)) 
+bing_sentiments <- bing_sentiments %>% mutate(across(c(bing_positive, bing_negative), ~ replace_na(., 0)))
+
+nrc_sentiments <- nrc_tokens %>% group_by(review_id) %>% mutate(nrc_positive = sum(sentiment.x == "positive", na.rm = TRUE), nrc_negative = sum(sentiment.x == "negative", na.rm = TRUE)) 
+nrc_sentiments <- nrc_sentiments %>% mutate(across(c(nrc_positive, nrc_negative), ~ replace_na(., 0)))
+
+afinn_score <- afinn_tokens %>% group_by(review_id) %>% mutate(a_score = sum(value, na.rm = TRUE)) 
+afinn_score <- afinn_score %>% mutate(a_score = replace_na(a_score, 0))
+```
+#Combine Dictionaries for combined model
+```{r}
+combined_tokens <- sample_reviews %>% left_join(bing_sentiments) %>% left_join(nrc_sentiments) %>% left_join(afinn_score) 
+combined_tokens <- combined_tokens %>% mutate(across(c(bing_positive, bing_negative, nrc_positive, nrc_negative, a_score), ~ replace_na(., 0)))
+```
+#Convert All to DTM
+```{r}
+revDTM_bing <- bing_sentiments %>% pivot_wider(id_cols=c(review_id,stars),names_from=word,values_from=tf_idf,values_fn = mean) %>% ungroup()
+dim(revDTM_bing)
+
+revDTM_nrc <- nrc_sentiments %>% pivot_wider(id_cols=c(review_id,stars),names_from=word,values_from=tf_idf,values_fn = mean) %>% ungroup()
+dim(revDTM_nrc)
+
+revDTM_afinn <- afinn_score %>% pivot_wider(id_cols=c(review_id,stars),names_from=word,values_from=tf_idf,values_fn = mean) %>% ungroup()
+dim(revDTM_afinn)
+
+revDTM_combined <- combined_tokens %>% pivot_wider(id_cols=c(review_id, stars), names_from=word, values_from=tf_idf,values_fn = mean) %>% ungroup()
+dim(revDTM_combined)
+```
+#Part ii - previously tokenized data (data_tokens / data_tokens2), which was used for these purposes 
+#Part iii -- Model Training and Parameter Tuning
+#Load Packages
+```{r}
+library(ranger)
+library(rsample)
+library(pROC)
+library(glmnet)
+library(xgboost)
+library(caret)
+library(Matrix)
+library(ROCR)
+```
+#Bing: Prep Data
+```{r}
+revDTM_bing <- revDTM_bing %>% filter(stars!= 3) %>% mutate(hiLo=ifelse(stars<=2,-1,1)) 
+revDTM_bing <- revDTM_bing %>% mutate(across(everything(),~replace_na(.,0))) 
+revDTM_bing$hiLo <- as.factor(revDTM_bing$hiLo)
+
+revDTM_bing_split <- initial_split(revDTM_bing,0.5)
+revDTM_bing_trn <- training(revDTM_bing_split)
+revDTM_bing_tst <- testing(revDTM_bing_split)
+
+bing_sentiments <- bing_sentiments %>% filter(stars!= 3) %>% mutate(hiLo=ifelse(stars<=2,-1,1)) 
+bing_trainIndex <- createDataPartition(bing_sentiments$stars, p = 0.5, list = FALSE, times = 1)
+bing_train <- bing_sentiments[bing_trainIndex, ]
+bing_test <- bing_sentiments[-bing_trainIndex, ]
+
+bing_train <- bing_train %>% mutate(across(everything(), as.factor))
+bing_test <- bing_test %>% mutate(across(everything(), as.factor)) 
+```
+#NRC: Prep Data
+```{r}
+revDTM_nrc <- revDTM_nrc %>% filter(stars!= 3) %>% mutate(hiLo=ifelse(stars<=2,-1,1)) 
+revDTM_nrc <- revDTM_nrc %>% mutate(across(everything(),~replace_na(.,0))) 
+revDTM_nrc$hiLo <- as.factor(revDTM_nrc$hiLo)
+
+revDTM_nrc_split <- initial_split(revDTM_nrc,0.5)
+revDTM_nrc_trn <- training(revDTM_nrc_split)
+revDTM_nrc_tst <- testing(revDTM_nrc_split)
+
+nrc_sentiments <- nrc_sentiments %>% filter(stars!= 3) %>% mutate(hiLo=ifelse(stars<=2,-1,1)) 
+nrc_trainIndex <- createDataPartition(nrc_sentiments$stars, p = 0.5, list = FALSE, times = 1)
+nrc_train <- nrc_sentiments[nrc_trainIndex, ]
+nrc_test <- nrc_sentiments[-nrc_trainIndex, ]
+
+nrc_train <- nrc_train %>% mutate(across(everything(), as.factor))
+nrc_test <- nrc_test %>% mutate(across(everything(), as.factor))
+```
+#Afinn: Prep Data
+```{r}
+revDTM_afinn <- revDTM_afinn %>% filter(stars!= 3) %>% mutate(hiLo=ifelse(stars<=2,-1,1))
+revDTM_afinn <- revDTM_afinn %>% mutate(across(everything(),~replace_na(.,0))) 
+revDTM_afinn$hiLo <- as.factor(revDTM_afinn$hiLo)
+
+revDTM_afinn_split <- initial_split(revDTM_afinn,0.5)
+revDTM_afinn_trn <- training(revDTM_afinn_split)
+revDTM_afinn_tst <- testing(revDTM_afinn_split)
+
+afinn_score <- afinn_score %>% filter(stars!= 3) %>% mutate(hiLo=ifelse(stars<=2,-1,1)) 
+afinn_trainIndex <- createDataPartition(afinn_score$stars, p = 0.5, list = FALSE, times = 1)
+afinn_train <- afinn_score[afinn_trainIndex, ]
+afinn_test <- afinn_score[-afinn_trainIndex, ]
+
+afinn_train <- afinn_train %>% mutate(across(everything(), as.factor))
+afinn_test <- afinn_test %>% mutate(across(everything(), as.factor))
+```
+#Combo: Prep Data
+```{r}
+revDTM_combined <- revDTM_combined %>% filter(stars!= 3) %>% mutate(hiLo=ifelse(stars<=2,-1,1)) %>% select(-stars)
+revDTM_combined <- revDTM_combined %>% mutate(across(everything(),~replace_na(.,0))) 
+revDTM_combined$hiLo <- as.factor(revDTM_combined$hiLo)
+
+revDTM_combined_split <- initial_split(revDTM_combined,0.5)
+revDTM_combined_trn <- training(revDTM_combined_split)
+revDTM_combined_tst <- testing(revDTM_combined_split)
+
+combined_tokens <- combined_tokens %>% filter(stars!= 3) %>% mutate(hiLo=ifelse(stars<=2,-1,1)) 
+combined_trainIndex <- createDataPartition(combined_tokens$stars, p = 0.5, list = FALSE, times = 1)
+combined_train <- combined_tokens[combined_trainIndex, ]
+combined_test <- combined_tokens[-combined_trainIndex, ]
+
+combined_train <- combined_train %>% mutate(across(everything(), as.factor))
+combined_test <- combined_test %>% mutate(across(everything(), as.factor))
+```
+#Random Forest Model
+#RF // Bing: Build RF Model
+```{r}
+rfModel_bing <- ranger(dependent.variable.name="hiLo", data=revDTM_bing_trn %>% select(-review_id, stars,hiLo), num.trees=500,mtry = sqrt(ncol(revDTM_bing_trn) - 1), importance='permutation', probability=TRUE)
+
+importance(rfModel_bing) %>% view()
+```
+#RF // NRC: Build RF Model
+```{r}
+rfModel_nrc <- ranger(dependent.variable.name="hiLo", data=revDTM_nrc_trn %>% select(-review_id, stars,hiLo), num.trees=500,mtry = sqrt(ncol(revDTM_nrc_trn) - 1), importance='permutation', probability=TRUE)
+
+importance(rfModel_nrc) %>% view()
+```
+#RF // Afinn: Build RF Model
+```{r}
+rfModel_afinn <- ranger(dependent.variable.name="hiLo", data=revDTM_afinn_trn %>% select(-review_id, stars, hiLo), num.trees=500,mtry = sqrt(ncol(revDTM_nrc_trn) - 1), importance='permutation', probability=TRUE)
+
+importance(rfModel_afinn) %>% view()
+```
+#RF // Combined: Build RF Model
+```{r}
+rfModel_combined <- ranger(dependent.variable.name="hiLo", data=revDTM_combined_trn %>% select(-review_id, hiLo), num.trees=500,mtry = sqrt(ncol(revDTM_nrc_trn) - 1), importance='permutation', probability=TRUE)
+
+importance(rfModel_combined) %>% view()
+```
+#Naive Bayes Model
+#NB // Bing: Train the Naive Bayes Model
+```{r}
+nb_bing_model <- naiveBayes(hiLo ~ ., data = bing_train %>% select(-stars,hiLo), method="bayes", usekernel=TRUE)
+```
+#NB // NRC: Train the Naive Bayes Model
+```{r}
+nb_nrc_model <- naiveBayes(hiLo ~ ., data = nrc_train %>% select(-stars,hiLo), method="bayes", usekernel=TRUE)
+```
+#NB // Afinn: Train the Naive Bayes Model
+```{r}
+nb_afinn_model <- naiveBayes(hiLo ~ ., data = afinn_train %>% select(-stars,hiLo), method="bayes", usekernel=TRUE)
+```
+#NB // Combined: Train the Naive Bayes Model
+```{r}
+nb_combined_model <- naiveBayes(hiLo ~ ., data = combined_train %>% select(-stars,hiLo), method="bayes", usekernel=TRUE)
+```
+#Lasso Logistic Regression Model
+#Lasso // Bing: Set Train & Test
+```{r}
+ybingTrn<-factor(if_else(bing_train$hiLo=="1", '1', '0'))
+xbingTrn<-bing_train %>% select(review_id,stars,word,tf_idf)
+
+ybingTst<-factor(if_else(bing_test$hiLo=="1", '1', '0'))
+xbingTst<-bing_test %>% select(review_id,stars,word,tf_idf)
+```
+#Lasso // Bing: Train Model
+```{r}
+lasso_bing_model <- cv.glmnet(data.matrix(xbingTrn %>% select(-stars)), ybingTrn, family = "binomial", alpha = 1, nfolds = 15, maxit = 1000, standardize=TRUE)
+```
+#Lasso // NRC: Set Train & Test
+```{r}
+ynrcTrn<-factor(if_else(nrc_train$hiLo=="1", '1', '0'))
+xnrcTrn<-nrc_train %>% select(review_id,stars,word,tf_idf)
+
+ynrcTst<-factor(if_else(nrc_test$hiLo=="1", '1', '0'))
+xnrcTst<-nrc_test %>% select(review_id,stars,word,tf_idf)
+```
+#Lasso // NRC: Train Model
+```{r}
+lasso_nrc_model <- cv.glmnet(data.matrix(xnrcTrn %>% select(-stars)), ynrcTrn, family = "binomial", alpha = 1, nfolds = 15, maxit = 1000, standardize=TRUE)
+```
+#Lasso // Afinn: Set Train & Test
+```{r}
+yafinnTrn<-factor(if_else(afinn_train$hiLo=="1", '1', '0'))
+xafinnTrn<-afinn_train %>% select(review_id,stars,word,tf_idf)
+
+yafinnTst<-factor(if_else(afinn_test$hiLo=="1", '1', '0'))
+xafinnTst<-afinn_test %>% select(review_id,stars,word,tf_idf)
+```
+#Lasso // Afinn: Train Model
+```{r}
+lasso_afinn_model <- cv.glmnet(data.matrix(xafinnTrn %>% select(-stars)), yafinnTrn, family = "binomial", alpha = 1, nfolds = 15, maxit = 1000, standardize=TRUE)
+```
+#Lasso // Combined: Set Train & Test
+```{r}
+ycombinedTrn<-factor(if_else(combined_train$hiLo=="1", '1', '0'))
+xcombinedTrn<-combined_train %>% select(review_id,stars,word,tf_idf)
+
+ycombinedTst<-factor(if_else(combined_train$hiLo=="1", '1', '0'))
+xcombinedTst<-combined_train %>% select(review_id,stars,word,tf_idf)
+```
+#Lasso // Combined: Train Model
+```{r}
+lasso_combined_model <- cv.glmnet(data.matrix(xcombinedTrn %>% select(-stars)), ycombinedTrn, family = "binomial", alpha = 1, nfolds = 15, maxit = 1000, standardize=TRUE)
+```
+#XGB Boost Model 
+#XGB // Bing: Set Train & Test, Parameters
+```{r}
+bing_dum <- dummyVars( ~.,data=revDTM_bing %>% select(-review_id,stars,hiLo)) 
+bing_dx <- predict(bing_dum,revDTM_bing)
+
+bing_dy <- class2ind(revDTM_bing$hiLo, drop2nd = FALSE)
+
+bing_hi <- bing_dy[,1] 
+bing_lo <- bing_dy[,2] 
+
+bing_trainIndex <- createDataPartition(revDTM_bing$hiLo, p = 0.5, list = FALSE, times = 1)
+bing_xTrn <- bing_dx[bing_trainIndex,]
+bing_Trn_hi <- bing_hi[bing_trainIndex]
+bing_xTst <- bing_dx[-bing_trainIndex,]
+bing_Tst_hi <- bing_hi[-bing_trainIndex]
+
+bing_dTrn <- xgb.DMatrix(subset(bing_xTrn), label=bing_Trn_hi)
+bing_dTst <- xgb.DMatrix(subset(bing_xTst), label=bing_Tst_hi)
+
+bing_xgbWatchlist <- list(train = bing_dTrn, eval = bing_dTst)
+
+bing_xgbParam <- list(max_depth = 7, subsample=0.8,eta = 0.01,objective = "binary:logistic",eval_metric="logloss", eval_metric = "auc")
+```
+#XGB // Bing: Train Model 
+```{r}
+bing_xgb_model<-xgb.train(bing_xgbParam, bing_dTrn, nrounds = 500, bing_xgbWatchlist, early_stopping_rounds = 10)
+```
+#XGB // NRC: Set Train & Test, Parameters
+```{r}
+nrc_dum <- dummyVars( ~.,data=revDTM_nrc %>% select(-review_id,stars,hiLo)) 
+nrc_dx <- predict(nrc_dum,revDTM_nrc)
+
+nrc_dy <- class2ind(revDTM_nrc$hiLo, drop2nd = FALSE)
+
+nrc_hi <- nrc_dy[,1] 
+nrc_lo <- nrc_dy[,2] 
+
+nrc_trainIndex <- createDataPartition(revDTM_nrc$hiLo, p = 0.5, list = FALSE, times = 1)
+nrc_xTrn <- nrc_dx[nrc_trainIndex,]
+nrc_Trn_hi <- nrc_hi[nrc_trainIndex]
+nrc_xTst <- nrc_dx[-nrc_trainIndex,]
+nrc_Tst_hi <- nrc_hi[-nrc_trainIndex]
+
+nrc_dTrn <- xgb.DMatrix(subset(nrc_xTrn), label=nrc_Trn_hi)
+nrc_dTst <- xgb.DMatrix(subset(nrc_xTst), label=nrc_Tst_hi)
+
+nrc_xgbWatchlist <- list(train =nrc_dTrn, eval = nrc_dTst)
+
+nrc_xgbParam <- list(max_depth = 7, subsample=0.8,eta = 0.01,objective = "binary:logistic",eval_metric="logloss", eval_metric = "auc")
+```
+#XGB // NRC: Train Model 
+```{r}
+nrc_xgb_model<-xgb.train(nrc_xgbParam, nrc_dTrn, nrounds = 500, nrc_xgbWatchlist, early_stopping_rounds = 10)
+```
+#XGB // Afinn: Set Train & Test, Parameters
+```{r}
+afinn_dum <- dummyVars( ~.,data=revDTM_afinn %>% select(-review_id,stars,hiLo)) 
+afinn_dx <- predict(afinn_dum,revDTM_afinn)
+
+afinn_dy <- class2ind(revDTM_afinn$hiLo, drop2nd = FALSE)
+
+afinn_hi <- afinn_dy[,1] 
+afinn_lo <- afinn_dy[,2] 
+
+afinn_trainIndex <- createDataPartition(revDTM_afinn$hiLo, p = 0.5, list = FALSE, times = 1)
+afinn_xTrn <- afinn_dx[afinn_trainIndex,]
+afinn_Trn_hi <- afinn_hi[afinn_trainIndex]
+afinn_xTst <- afinn_dx[-afinn_trainIndex,]
+afinn_Tst_hi <- afinn_hi[-afinn_trainIndex]
+
+afinn_dTrn <- xgb.DMatrix(subset(afinn_xTrn), label=afinn_Trn_hi)
+afinn_dTst <- xgb.DMatrix(subset(afinn_xTst), label=afinn_Tst_hi)
+
+afinn_xgbWatchlist <- list(train = afinn_dTrn, eval = afinn_dTst)
+
+afinn_xgbParam <- list(max_depth = 7, subsample=0.8,eta = 0.01,objective = "binary:logistic",eval_metric="logloss", eval_metric = "auc")
+```
+#XGB // Afinn: Train Model 
+```{r}
+afinn_xgb_model<-xgb.train(afinn_xgbParam, afinn_dTrn, nrounds = 500, afinn_xgbWatchlist, early_stopping_rounds = 10)
+```
+#XGB // Combined: Set Train & Test, Parameters
+```{r}
+combined_dum <- dummyVars( ~.,data=revDTM_combined %>% select(-review_id,hiLo)) 
+combined_dx <- predict(combined_dum,revDTM_combined)
+
+combined_dy <- class2ind(revDTM_combined$hiLo, drop2nd = FALSE)
+
+combined_hi <- combined_dy[,1] 
+combined_lo <- combined_dy[,2] 
+
+combined_trainIndex <- createDataPartition(revDTM_combined$hiLo, p = 0.5, list = FALSE, times = 1)
+combined_xTrn <- combined_dx[combined_trainIndex,]
+combined_Trn_hi <- combined_hi[combined_trainIndex]
+combined_xTst <- combined_dx[-combined_trainIndex,]
+combined_Tst_hi <- combined_hi[-combined_trainIndex]
+
+combined_dTrn <- xgb.DMatrix(subset(combined_xTrn), label=combined_Trn_hi)
+combined_dTst <- xgb.DMatrix(subset(combined_xTst), label=combined_Tst_hi)
+
+combined_xgbWatchlist <- list(train = combined_dTrn, eval = combined_dTst)
+
+combined_xgbParam <- list(max_depth = 7, subsample=0.8,eta = 0.01,objective = "binary:logistic",eval_metric="logloss", eval_metric = "auc")
+```
+#XGB // Combined: Train Model 
+```{r}
+combined_xgb_model<-xgb.train(combined_xgbParam, combined_dTrn, nrounds = 500, combined_xgbWatchlist, early_stopping_rounds = 10)
+```
+#Part iv -- Obtain Predictions & Evaluate Performance 
+#Random Forest: Obtain Predictions
+```{r}
+rf_bing_trn <- predict(rfModel_bing, revDTM_bing_trn %>% select(-review_id))$predictions
+rf_bing_tst <- predict(rfModel_bing, revDTM_bing_tst%>% select(-review_id))$predictions
+
+rf_nrc_trn <- predict(rfModel_nrc, revDTM_nrc_trn %>% select(-review_id))$predictions
+rf_nrc_tst <- predict(rfModel_nrc, revDTM_nrc_tst%>% select(-review_id))$predictions
+
+rf_afinn_trn <- predict(rfModel_afinn, revDTM_afinn_trn %>% select(-review_id))$predictions
+rf_afinn_tst <- predict(rfModel_afinn, revDTM_afinn_tst%>% select(-review_id))$predictions
+
+rf_combined_trn <- predict(rfModel_combined, revDTM_combined_trn %>% select(-review_id))$predictions
+rf_combined_tst <- predict(rfModel_combined, revDTM_combined_tst%>% select(-review_id))$predictions
+```
+#RF // Bing: Confusion Matrix
+```{r}
+table(actual=revDTM_bing_trn$hiLo,preds=rf_bing_trn[,2]>0.5)
+table(actual=revDTM_bing_tst$hiLo,preds=rf_bing_tst[,2]>0.5)
+```
+#RF // Bing: ROC, AUC
+```{r}
+rocTrn_bing <- roc(revDTM_bing_trn$hiLo, rf_bing_trn[,2],levels=c(-1,1))
+rocTst_bing <- roc(revDTM_bing_tst$hiLo, rf_bing_tst[,2],levels=c(-1,1))
+plot.roc(rocTrn_bing, col='blue')
+plot.roc(rocTst_bing,col='red',add=TRUE)
+legend("bottomright",legend=c("Training","Test"),col=c("blue","red"),lwd=2,cex=0.8,bty='n')
+
+auc_bing_trn <- auc(rocTrn_bing)
+print(paste("Training AUC:", auc_bing_trn))
+auc_bing_tst <- auc(rocTst_bing)
+print(paste("Testing AUC:", auc_bing_tst))
+```
+#RF // NRC: Confusion Matrix
+```{r}
+table(actual=revDTM_nrc_trn$hiLo,preds=rf_nrc_trn[,2]>0.5)
+table(actual=revDTM_nrc_tst$hiLo,preds=rf_nrc_tst[,2]>0.5)
+```
+#RF // NRC: ROC, AUC
+```{r}
+rocTrn_nrc <- roc(revDTM_nrc_trn$hiLo, rf_nrc_trn[,2],levels=c(-1,1))
+rocTst_nrc <- roc(revDTM_nrc_tst$hiLo, rf_nrc_tst[,2],levels=c(-1,1))
+plot.roc(rocTrn_nrc, col='blue')
+plot.roc(rocTst_nrc,col='red',add=TRUE)
+legend("bottomright",legend=c("Training","Test"),col=c("blue","red"),lwd=2,cex=0.8,bty='n')
+
+auc_nrc_trn <- auc(rocTrn_nrc)
+print(paste("Training AUC:", auc_nrc_trn))
+auc_nrc_tst <- auc(rocTst_nrc)
+print(paste("Testing AUC:", auc_nrc_tst))
+```
+#RF // Afinn: Confusion Matrix
+```{r}
+table(actual=revDTM_afinn_trn$hiLo,preds=rf_afinn_trn[,2]>0.5)
+table(actual=revDTM_afinn_tst$hiLo,preds=rf_afinn_tst[,2]>0.5)
+```
+#RF // Afinn: ROC, AUC
+```{r}
+rocTrn_afinn <- roc(revDTM_afinn_trn$hiLo, rf_afinn_trn[,2],levels=c(-1,1))
+rocTst_afinn <- roc(revDTM_afinn_tst$hiLo, rf_afinn_tst[,2],levels=c(-1,1))
+plot.roc(rocTrn_afinn, col='blue')
+plot.roc(rocTst_afinn,col='red',add=TRUE)
+legend("bottomright",legend=c("Training","Test"),col=c("blue","red"),lwd=2,cex=0.8,bty='n')
+
+auc_afinn_trn <- auc(rocTrn_afinn)
+print(paste("Training AUC:", auc_afinn_trn))
+auc_afinn_tst <- auc(rocTst_afinn)
+print(paste("Testing AUC:", auc_afinn_tst))
+```
+#RF // Combined: Confusion Matrix
+```{r}
+table(actual=revDTM_combined_trn$hiLo,preds=rf_combined_trn[,2]>0.5)
+table(actual=revDTM_combined_tst$hiLo,preds=rf_combined_tst[,2]>0.5)
+```
+#RF // Combined: ROC, AUC
+```{r}
+rocTrn_combined <- roc(revDTM_combined_trn$hiLo, rf_combined_trn[,2],levels=c(-1,1))
+rocTst_combined <- roc(revDTM_combined_tst$hiLo, rf_combined_tst[,2],levels=c(-1,1))
+plot.roc(rocTrn_combined, col='blue')
+plot.roc(rocTst_combined,col='red',add=TRUE)
+legend("bottomright",legend=c("Training","Test"),col=c("blue","red"),lwd=2,cex=0.8,bty='n')
+
+auc_combined_trn <- auc(rocTrn_combined)
+print(paste("Training AUC:", auc_combined_trn))
+auc_combined_tst <- auc(rocTst_combined)
+print(paste("Testing AUC:", auc_combined_tst))
+```
+#Naive Bayes Model
+#NB // Bing: Predict on Test
+```{r}
+nb_bing_pred <- predict(nb_bing_model, newdata = bing_test)
+```
+#NB // Bing: Calculate Accuracy
+```{r}
+nb_bing_accuracy <- mean(nb_bing_pred == bing_test$hiLo)
+cat("Naive Bayes / Bing Accuracy:", nb_bing_accuracy, "\n")
+```
+#NB // NRC: Predict on Test
+```{r}
+nb_nrc_pred <- predict(nb_nrc_model, newdata = nrc_test)
+```
+#NB // NRC: Calculate Accuracy
+```{r}
+nb_nrc_accuracy <- mean(nb_nrc_pred == nrc_test$hiLo)
+cat("Naive Bayes / NRC Accuracy:", nb_nrc_accuracy, "\n")
+```
+#NB // Afinn: Predict on Test
+```{r}
+nb_afinn_pred <- predict(nb_afinn_model, newdata = afinn_test)
+```
+#NB // Afinn: Calculate Accuracy
+```{r}
+nb_afinn_accuracy <- mean(nb_afinn_pred == afinn_test$hiLo)
+cat("Naive Bayes / Afinn Accuracy:", nb_afinn_accuracy, "\n")
+```
+#NB // Combined: Predict on Test
+```{r}
+nb_combined_pred <- predict(nb_combined_model, newdata = combined_test)
+```
+#NB // Combined: Calculate Accuracy
+```{r}
+nb_combined_accuracy <- mean(nb_combined_pred == combined_test$hiLo)
+cat("Naive Bayes / Combined Accuracy:", nb_combined_accuracy, "\n")
+```
+#Lasso Logistic Regression Model
+#Lasso // Bing: Predict and Get Accuracry
+```{r}
+lasso_bing_pred <- predict(lasso_bing_model, newx = data.matrix(xbingTst %>% select(-stars)), s = "lambda.min", type = "class")
+
+lasso_bing_accuracy <- mean(lasso_bing_pred == bing_test$hiLo)
+cat("Lasso Logistic Regression / Bing Accuracy:", lasso_bing_accuracy, "\n")
+```
+#Lasso // NRC: Predict and Get Accuracry
+```{r}
+lasso_nrc_pred <- predict(lasso_nrc_model, newx = data.matrix(xnrcTst %>% select(-stars)), s = "lambda.min", type = "class")
+
+lasso_nrc_accuracy <- mean(lasso_nrc_pred == nrc_test$hiLo)
+cat("Lasso Logistic Regression / NRC Accuracy:", lasso_nrc_accuracy, "\n")
+```
+#Lasso // Afinn: Predict and Get Accuracry
+```{r}
+lasso_afinn_pred <- predict(lasso_afinn_model, newx = data.matrix(xafinnTst %>% select(-stars)), s = "lambda.min", type = "class")
+
+lasso_afinn_accuracy <- mean(lasso_afinn_pred == afinn_test$hiLo)
+cat("Lasso Logistic Regression / Afinn Accuracy:", lasso_afinn_accuracy, "\n")
+```
+#Lasso // Combined: Predict and Get Accuracry
+```{r}
+lasso_combined_pred <- predict(lasso_combined_model, newx = data.matrix(xcombinedTst %>% select(-stars)), s = "lambda.min", type = "class")
+
+lasso_combined_accuracy <- mean(lasso_combined_pred == combined_test$hiLo)
+cat("Lasso Logistic Regression / Combined Accuracy:", lasso_combined_accuracy, "\n")
+```
+#XGB Boost Model
+#XGB: Obtain Predictions
+```{r}
+bing_xpredTrn<-predict(bing_xgb_model, bing_dTrn)
+bing_xpredTst<-predict(bing_xgb_model, bing_dTst)
+
+nrc_xpredTrn<-predict(nrc_xgb_model, nrc_dTrn)
+nrc_xpredTst<-predict(nrc_xgb_model, nrc_dTst)
+
+afinn_xpredTrn<-predict(afinn_xgb_model, afinn_dTrn)
+afinn_xpredTst<-predict(afinn_xgb_model, afinn_dTst)
+
+combined_xpredTrn<-predict(combined_xgb_model, combined_dTrn)
+combined_xpredTst<-predict(combined_xgb_model, combined_dTst)
+```
+#XGB // Bing: Confusion MAtrix
+```{r}
+table(pred=as.numeric(bing_xpredTrn > 0.5), act = bing_Trn_hi)
+table(pred=as.numeric(bing_xpredTst > 0.5), act = bing_Tst_hi)
+```
+#XGB // Bing: ROC, AUC
+```{r}
+bing_Trn_roc <- roc(bing_Trn_hi, bing_xpredTrn)
+bing_Tst_roc <- roc(bing_Tst_hi, bing_xpredTst)
+
+plot(bing_Trn_roc, col = "blue", main = "ROC Curve for Bing XGBoost Model")
+plot(bing_Tst_roc, col = "red", add=TRUE)
+legend("bottomright",legend=c("Training","Test"),col=c("blue","red"),lwd=2,cex=0.8,bty='n')
+
+bing_auc_trn <- auc(bing_Trn_roc)
+print(paste("Training AUC:", bing_auc_trn))
+bing_auc_tst <- auc(bing_Tst_roc)
+print(paste("Testing AUC:", bing_auc_tst))
+```
+#XGB // NRC: Confusion MAtrix
+```{r}
+table(pred=as.numeric(nrc_xpredTrn > 0.5), act = nrc_Trn_hi)
+table(pred=as.numeric(nrc_xpredTst > 0.5), act = nrc_Tst_hi)
+```
+#XGB // NRC: ROC, AUC
+```{r}
+nrc_Trn_roc <- roc(nrc_Trn_hi, nrc_xpredTrn)
+nrc_Tst_roc <- roc(nrc_Tst_hi, nrc_xpredTst)
+
+plot(nrc_Trn_roc, col = "blue", main = "ROC Curve for NRC XGBoost Model")
+plot(nrc_Tst_roc, col = "red", add=TRUE)
+legend("bottomright",legend=c("Training","Test"),col=c("blue","red"),lwd=2,cex=0.8,bty='n')
+
+nrc_auc_trn <- auc(nrc_Trn_roc)
+print(paste("Training AUC:", nrc_auc_trn))
+nrc_auc_tst <- auc(nrc_Tst_roc)
+print(paste("Testing AUC:", nrc_auc_tst))
+```
+#XGB // Afinn: Confusion MAtrix
+```{r}
+table(pred=as.numeric(afinn_xpredTrn > 0.5), act = afinn_Trn_hi)
+table(pred=as.numeric(afinn_xpredTst > 0.5), act = afinn_Tst_hi)
+```
+#XGB // Afinn: ROC, AUC
+```{r}
+afinn_Trn_roc <- roc(afinn_Trn_hi, afinn_xpredTrn)
+afinn_Tst_roc <- roc(afinn_Tst_hi, afinn_xpredTst)
+
+plot(afinn_Trn_roc, col = "blue", main = "ROC Curve for Afinn XGBoost Model")
+plot(afinn_Tst_roc, col = "red", add=TRUE)
+legend("bottomright",legend=c("Training","Test"),col=c("blue","red"),lwd=2,cex=0.8,bty='n')
+
+afinn_auc_trn <- auc(afinn_Trn_roc)
+print(paste("Training AUC:", afinn_auc_trn))
+afinn_auc_tst <- auc(afinn_Tst_roc)
+print(paste("Testing AUC:", afinn_auc_tst))
+```
+#XGB // Combo: Confusion MAtrix
+```{r}
+table(pred=as.numeric(combined_xpredTrn > 0.5), act = combined_Trn_hi)
+table(pred=as.numeric(combined_xpredTst > 0.5), act = combined_Tst_hi)
+```
+#XGB // Combo: ROC, AUC
+```{r}
+combined_Trn_roc <- roc(combined_Trn_hi, combined_xpredTrn)
+combined_Tst_roc <- roc(combined_Tst_hi, combined_xpredTst)
+
+plot(combined_Trn_roc, col = "blue", main = "ROC Curve for Combined XGBoost Model")
+plot(combined_Tst_roc, col = "red", add=TRUE)
+legend("bottomright",legend=c("Training","Test"),col=c("blue","red"),lwd=2,cex=0.8,bty='n')
+
+combined_auc_trn <- auc(combined_Trn_roc)
+print(paste("Training AUC:", combined_auc_trn))
+combined_auc_tst <- auc(combined_Tst_roc)
+print(paste("Testing AUC:", combined_auc_tst))
+```
+#Part D -- Model w/ Broader Set of Terms 
+#Prep Data
+```{r}
+set.seed(123)
+sample_reviews <- data_tokens2 %>% sample_n(20000)
+
+revDTM <- sample_reviews %>% pivot_wider(id_cols=c(review_id,stars),names_from=word,values_from=tf_idf,values_fn = mean) %>% ungroup()
+dim(revDTM)
+
+revDTM <- revDTM %>% filter(stars!= 3) %>% mutate(hiLo=ifelse(stars<=2,-1,1)) 
+revDTM <- revDTM %>% mutate(across(everything(),~replace_na(.,0))) 
+revDTM$hiLo <- as.factor(revDTM$hiLo)
+```
+#Random Forrest Model
+#Set Test/Train and Build Model
+```{r}
+RF_DTM_split <- initial_split(revDTM,0.5)
+RF_DTM_trn <- training(RF_DTM_split)
+RF_DTM_tst <- testing(RF_DTM_split)
+```
+#Adjust Parameters & Run Model
+```{r}
+rfModel <- ranger(dependent.variable.name="hiLo", data=RF_DTM_trn %>% select(-review_id, stars,hiLo), num.trees=500,mtry = sqrt(ncol(RF_DTM_trn) - 1), importance='permutation', probability=TRUE)
+```
+#Obtain Predictions
+```{r}
+rf_trn <- predict(rfModel, RF_DTM_trn %>% select(-review_id,hiLo,stars))$predictions
+rf_tst <- predict(rfModel, RF_DTM_tst %>% select(-review_id,hiLo,stars))$predictions
+```
+#Confusion Matrix
+```{r}
+table(actual=RF_DTM_trn$hiLo,preds=rf_trn[,2]>0.5)
+table(actual=RF_DTM_tst$hiLo,preds=rf_tst[,2]>0.5)
+```
+#ROC, AUC
+```{r}
+rocTrn <- roc(RF_DTM_trn$hiLo, rf_trn[,2],levels=c(-1,1))
+rocTst <- roc(RF_DTM_tst$hiLo, rf_tst[,2],levels=c(-1,1))
+plot.roc(rocTrn, col='blue')
+plot.roc(rocTst,col='red',add=TRUE)
+legend("bottomright",legend=c("Training","Test"),col=c("blue","red"),lwd=2,cex=0.8,bty='n')
+
+auc_trn <- auc(rocTrn)
+print(paste("Training AUC:", auc_trn))
+auc_tst <- auc(rocTst_bing)
+print(paste("Testing AUC:", auc_tst))
+```
+#Naive Bayes Model
+#Set Test/Train and Build Model
+```{r}
+NB_DTM_split <- initial_split(revDTM,0.5)
+NB_DTM_trn <- training(NB_DTM_split)
+NB_DTM_tst <- testing(NB_DTM_split)
+```
+#Train the Naive Bayes Model
+```{r}
+nb_model <- naiveBayes(hiLo ~ ., data = NB_DTM_trn %>% select(-review_id, stars,hiLo), method="bayes", usekernel=TRUE)
+```
+#Calculate Accuracy
+```{r}
+bayes_pred <- predict(nb_model, newdata = NB_DTM_tst)
+nb_accuracy <- mean(bayes_pred == NB_DTM_tst$hiLo)
+cat("Naive Bayes / Broader Set Accuracy:", nb_accuracy, "\n")
+```
+#Lasso Logistic Regression Model
+#Set Train & Test
+```{r}
+lr_DTM_split <- initial_split(revDTM,0.5)
+lr_DTM_trn <- training(lr_DTM_split)
+lr_DTM_tst <- testing(lr_DTM_split)
+
+ylrTrn<-factor(if_else(lr_DTM_trn$hiLo=="1", '1', '0'))
+xlrTrn<-lr_DTM_trn 
+
+ylrTst<-factor(if_else(lr_DTM_tst$hiLo=="1", '1', '0'))
+xlrTst<-lr_DTM_tst 
+```
+#Train Model
+```{r}
+lasso_model <- cv.glmnet(data.matrix(xlrTrn %>% select(-stars)), ylrTrn, family = "binomial", alpha = 1, nfolds = 15, maxit = 1000, standardize=TRUE)
+```
+#Predict and Get Accuracry
+```{r}
+lasso_pred <- predict(lasso_model, newx = data.matrix(xlrTst %>% select(-stars)), s = "lambda.min", type = "class")
+
+lasso_accuracy <- mean(lasso_pred == lr_DTM_tst$hiLo)
+cat("Lasso Logistic Regression / Broader Terms Accuracy:", lasso_accuracy, "\n")
+```
+#XGB Boost
+#Set Train & Test, Parameters
+```{r}
+dumvar <- dummyVars( ~.,data=revDTM %>% select(-review_id,stars,hiLo)) 
+dx <- predict(dumvar,revDTM)
+
+dy <- class2ind(revDTM$hiLo, drop2nd = FALSE)
+
+hi <- dy[,1] 
+lo <- dy[,2] 
+
+trainIndex <- createDataPartition(revDTM$hiLo, p = 0.5, list = FALSE, times = 1)
+xTrn <- dx[trainIndex,]
+Trn_hi <- hi[trainIndex]
+xTst <- dx[-trainIndex,]
+Tst_hi <- hi[-trainIndex]
+
+dTrn <- xgb.DMatrix(subset(xTrn), label=Trn_hi)
+dTst <- xgb.DMatrix(subset(xTst), label=Tst_hi)
+
+xgbWatchlist <- list(train = dTrn, eval = dTst)
+
+xgbParam <- list(max_depth = 7, subsample=0.8,eta = 0.01,objective = "binary:logistic",eval_metric="logloss", eval_metric = "auc")
+```
+#Train Model 
+```{r}
+xgb_model<-xgb.train(xgbParam, dTrn, nrounds = 500, xgbWatchlist, early_stopping_rounds = 10)
+```
+#XGB: Obtain Predictions
+```{r}
+xpredTrn<-predict(xgb_model, dTrn)
+xpredTst<-predict(xgb_model, dTst)
+```
+#XGB // Bing: Confusion MAtrix
+```{r}
+table(pred=as.numeric(xpredTrn > 0.5), act = Trn_hi)
+table(pred=as.numeric(xpredTst > 0.5), act = Tst_hi)
+```
+#XGB // Bing: ROC, AUC
+```{r}
+Trn_roc <- roc(Trn_hi, xpredTrn)
+Tst_roc <- roc(Tst_hi, xpredTst)
+
+plot(Trn_roc, col = "blue", main = "ROC Curve for Broader Terms XGBoost Model")
+plot(Tst_roc, col = "red", add=TRUE)
+legend("bottomright",legend=c("Training","Test"),col=c("blue","red"),lwd=2,cex=0.8,bty='n')
+
+bing_auc_trn <- auc(bing_Trn_roc)
+print(paste("Training AUC:", bing_auc_trn))
+bing_auc_tst <- auc(bing_Tst_roc)
+print(paste("Testing AUC:", bing_auc_tst))
+```
+# Q5 Part e -- code above includes necessary information for part e 
